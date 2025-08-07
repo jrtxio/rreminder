@@ -16,7 +16,7 @@
 (define current-filter (make-parameter "工作"))
 (define current-view (make-parameter "list")) ; "list", "today", "completed"
 
-;; 修复问题1:日期格式化问题
+;; 日期格式化函数
 (define (normalize-date-string date-str)
   (let ([trimmed-str (string-trim date-str)])
     (if (equal? trimmed-str "")
@@ -33,7 +33,6 @@
                          (<= 1 month-num 12)
                          (<= 1 day-num 31)
                          (<= 1900 year-num 9999))
-                    ;; 使用简单的格式化方法
                     (format "~a-~a-~a"
                             (if (< year-num 1000) 
                                 (format "0~a" year-num) 
@@ -76,7 +75,7 @@
     (all-tasks (filter (lambda (t) (not (equal? (task-id t) id-to-delete))) (all-tasks)))
     (save-tasks!)))
 
-;; 修复问题2:添加编辑任务功能
+
 (define (edit-task! id-to-edit new-text)
   (with-handlers ([exn:fail? (lambda (e)
                                (printf "编辑任务错误: ~a\n" (exn-message e)))])
@@ -89,7 +88,7 @@
     (all-tasks updated-tasks)
     (save-tasks!)))
 
-;; 修复问题2和3:改进的任务项UI组件
+
 (define task-item%
   (class horizontal-panel%
     (init-field task-data)
@@ -104,7 +103,7 @@
       (define current-task-id (task-id task-data))
       (define editing? #f)
 
-      ;; 修复问题3:使用固定宽度的复选框确保跨平台一致性
+     
       (define checkbox-panel (new panel%
                                   [parent this]
                                   [min-width 30]
@@ -144,7 +143,6 @@
                [label (format-date (task-due-date task-data))]
                [font (make-font #:size 9 #:family 'modern #:style 'italic)])))
 
-      ;; 修复问题3:按钮面板,确保按钮大小一致
       (define button-panel (new horizontal-panel%
                                 [parent this]
                                 [stretchable-width #f]
@@ -331,27 +329,27 @@
             date-str))
       ""))
 
-;; 修复问题3:主窗口布局优化,确保跨平台一致性
+
 (define frame (new frame%
-                   [label "RReminder"]
-                   [width 850]  ; 稍微增加宽度以适应新的布局
+                   [label "rreminder"]
+                   [width 850]  ;
                    [height 650]
                    [style '(no-resize-border)]))
 
 (define main-panel (new horizontal-panel% 
                         [parent frame] 
                         [spacing 8] 
-                        [border 8])) ; 统一间距和边框
+                        [border 8]))
 
 (define sidebar (new vertical-panel%
                      [parent main-panel]
-                     [min-width 160]  ; 稍微增加侧边栏宽度
+                     [min-width 120]
                      [spacing 8]
                      [border 8]
                      [stretchable-width #f]
                      [style '(border)]))
 
-;; 修复问题3:统一按钮大小和间距
+
 (define filter-panel (new horizontal-panel%
                           [parent sidebar]
                           [stretchable-height #f]
@@ -360,8 +358,8 @@
 (define today-btn (new button%
                        [parent filter-panel]
                        [label "今天"]
-                       [min-width 65]
-                       [min-height 32]
+                       [min-width 60]
+                       [min-height 35]
                        [callback (lambda (btn evt)
                                    (current-view "today")
                                    (send title-label set-label "今天")
@@ -370,8 +368,8 @@
 (define completed-btn (new button%
                            [parent filter-panel]
                            [label "完成"]
-                           [min-width 65]
-                           [min-height 32]
+                           [min-width 60]
+                           [min-height 35]
                            [callback (lambda (btn evt)
                                        (current-view "completed")
                                        (send title-label set-label "完成")
