@@ -332,22 +332,34 @@
 
 (define frame (new frame%
                    [label "rreminder"]
-                   [width 850]  ;
+                   [width 850]
                    [height 650]
-                   [style '(no-resize-border)]))
+                   [style '(no-resize-border)]
+                   ))
 
 (define main-panel (new horizontal-panel% 
                         [parent frame] 
-                        [spacing 8] 
-                        [border 8]))
+                        [spacing 0] 
+                        [border 0]))
 
 (define sidebar (new vertical-panel%
                      [parent main-panel]
                      [min-width 120]
-                     [spacing 8]
-                     [border 8]
+                     [spacing 4]
+                     [border 4]
                      [stretchable-width #f]
-                     [style '(border)]))
+                     ))
+
+(define divider (new canvas%
+                     [parent main-panel]
+                     [min-width 1]
+                     [stretchable-width #f]
+                     [stretchable-height #t]
+                     [paint-callback
+                      (lambda (canvas dc)
+                        (define-values (w h) (send canvas get-size))
+                        (send dc set-pen "gray" 1 'solid)
+                        (send dc draw-line 0 0 0 h))]))
 
 
 (define filter-panel (new horizontal-panel%
@@ -355,11 +367,18 @@
                           [stretchable-height #f]
                           [spacing 4]))
 
+(define label-panel (new horizontal-panel%
+                         [parent sidebar]
+                         [stretchable-height #f]
+                         [spacing 4]))
+
 (define today-btn (new button%
                        [parent filter-panel]
                        [label "今天"]
-                       [min-width 60]
-                       [min-height 35]
+                       [min-width 50]
+                       [min-height 30]
+                       [stretchable-width #t]
+                       [stretchable-height #t]
                        [callback (lambda (btn evt)
                                    (current-view "today")
                                    (send title-label set-label "今天")
@@ -368,18 +387,20 @@
 (define completed-btn (new button%
                            [parent filter-panel]
                            [label "完成"]
-                           [min-width 60]
-                           [min-height 35]
+                           [min-width 50]
+                           [min-height 50]
+                           [stretchable-width #t]
+                           [stretchable-height #t]
                            [callback (lambda (btn evt)
                                        (current-view "completed")
                                        (send title-label set-label "完成")
                                        (refresh-task-list!))]))
 
 (define my-lists-label (new message%
-                             [parent sidebar]
-                             [label "我的列表"]
-                             [vert-margin 12]
-                             [font (make-font #:weight 'bold #:family 'modern #:size 11)]))
+                            [parent label-panel]
+                            [label "我的列表"]
+                            [vert-margin 2]
+                            [font (make-font #:weight 'bold #:family 'modern #:size 10)]))
 
 (define lists-panel (new vertical-panel% [parent sidebar] [spacing 2]))
 (define list-buttons '())
@@ -435,9 +456,9 @@
 
 (define content-panel (new vertical-panel% 
                            [parent main-panel] 
-                           [spacing 8] 
-                           [border 8] 
-                           [style '(border)]))
+                           [spacing 4] 
+                           [border 4]
+                           ))
 
 (define title-panel (new horizontal-panel%
                          [parent content-panel]
@@ -450,8 +471,8 @@
                          [font (make-font #:size 13 #:weight 'bold #:family 'modern)]))
 
 (define task-scroll (new panel%
-                        [parent content-panel]
-                        [style '(vscroll)]))
+                         [parent content-panel]
+                         [style '(vscroll)]))
 
 (define task-list-panel (new vertical-panel%
                              [parent task-scroll]
