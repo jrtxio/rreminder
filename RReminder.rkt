@@ -16,8 +16,7 @@
 (define current-filter (make-parameter "工作"))
 (define current-view (make-parameter "list")) ; "list", "today", "completed"
 
-;; 辅助函数:标准化日期字符串
-;; 修复: 确保日期格式正确,如果格式不正确,返回 #f,这样可以避免将不合法日期保存到文件中
+;; 修复问题1:日期格式化问题
 (define (normalize-date-string date-str)
   (let ([trimmed-str (string-trim date-str)])
     (if (equal? trimmed-str "")
@@ -25,17 +24,26 @@
         (let ([parts (string-split trimmed-str "-")])
           (if (= (length parts) 3)
               (let* ([year-str (list-ref parts 0)]
-                     [month-num (string->number (list-ref parts 1))]
-                     [day-num (string->number (list-ref parts 2))])
-                (if (and year-str month-num day-num
+                     [month-str (list-ref parts 1)]
+                     [day-str (list-ref parts 2)]
+                     [year-num (string->number year-str)]
+                     [month-num (string->number month-str)]
+                     [day-num (string->number day-str)])
+                (if (and year-num month-num day-num
                          (<= 1 month-num 12)
-                         (<= 1 day-num 31)) ; 增加日期合法性检查
-                    (string-append
-                     year-str
-                     "-"
-                     (~a month-num #:min-width 2 #:pad-string "0")
-                     "-"
-                     (~a day-num #:min-width 2 #:pad-string "0"))
+                         (<= 1 day-num 31)
+                         (<= 1900 year-num 9999))
+                    ;; 使用简单的格式化方法
+                    (format "~a-~a-~a"
+                            (if (< year-num 1000) 
+                                (format "0~a" year-num) 
+                                (~a year-num))
+                            (if (< month-num 10) 
+                                (format "0~a" month-num) 
+                                (~a month-num))
+                            (if (< day-num 10) 
+                                (format "0~a" day-num) 
+                                (~a day-num)))
                     #f))
               #f)))))
 
@@ -68,31 +76,56 @@
     (all-tasks (filter (lambda (t) (not (equal? (task-id t) id-to-delete))) (all-tasks)))
     (save-tasks!)))
 
-;; 任务项UI组件
+;; 修复问题2:添加编辑任务功能
+(define (edit-task! id-to-edit new-text)
+  (with-handlers ([exn:fail? (lambda (e)
+                               (printf "编辑任务错误: ~a\n" (exn-message e)))])
+    (define updated-tasks
+      (map (lambda (t)
+             (if (equal? (task-id t) id-to-edit)
+                 (struct-copy task t [text new-text])
+                 t))
+           (all-tasks)))
+    (all-tasks updated-tasks)
+    (save-tasks!)))
+
+;; 修复问题2和3:改进的任务项UI组件
 (define task-item%
   (class horizontal-panel%
     (init-field task-data)
     
     (super-new (stretchable-height #f)
                (stretchable-width #t)
-               (style '(border)))
+               (style '(border))
+               (spacing 8) ; 统一间距
+               (border 5)) ; 统一边框
     
     (when task-data
       (define current-task-id (task-id task-data))
+      (define editing? #f)
 
+      ;; 修复问题3:使用固定宽度的复选框确保跨平台一致性
+      (define checkbox-panel (new panel%
+                                  [parent this]
+                                  [min-width 30]
+                                  [stretchable-width #f]))
+      
       (define checkbox (new check-box%
-                            [parent this]
+                            [parent checkbox-panel]
                             [label ""]
                             [value (task-completed? task-data)]
                             [callback (lambda (cb evt)
                                         (toggle-task! current-task-id)
                                         (refresh-task-list!))]))
 
-      (define text-date-panel (new horizontal-panel%
+      ;; 文本和日期面板
+      (define text-date-panel (new vertical-panel%
                                    [parent this]
                                    [stretchable-width #t]
-                                   [alignment '(left top)]))
+                                   [alignment '(left top)]
+                                   [spacing 2]))
       
+      ;; 任务文本显示/编辑控件
       (define task-text-msg (new message%
                                  [parent text-date-panel]
                                  [stretchable-width #t]
@@ -100,20 +133,74 @@
                                  [font (if (task-completed? task-data)
                                            (make-font #:style 'italic #:family 'modern)
                                            (make-font #:family 'modern))]))
+      
+      (define task-text-field #f) ; 编辑时使用的文本框
 
+      ;; 显示截止日期
       (define due-label
         (when (task-due-date task-data)
           (new message%
                [parent text-date-panel]
                [label (format-date (task-due-date task-data))]
-               [font (make-font #:size 10 #:family 'modern)])))
+               [font (make-font #:size 9 #:family 'modern #:style 'italic)])))
 
+      ;; 修复问题3:按钮面板,确保按钮大小一致
+      (define button-panel (new horizontal-panel%
+                                [parent this]
+                                [stretchable-width #f]
+                                [spacing 4]))
+      
+      ;; 编辑按钮
+      (define edit-btn (new button%
+                            [parent button-panel]
+                            [label "✎"]
+                            [min-width 32]
+                            [min-height 24]
+                            [callback (lambda (btn evt)
+                                        (if editing?
+                                            (finish-edit)
+                                            (start-edit)))]))
+      
+      ;; 删除按钮
       (define delete-btn (new button%
-                              [parent this]
+                              [parent button-panel]
                               [label "×"]
+                              [min-width 32]
+                              [min-height 24]
                               [callback (lambda (btn evt)
                                           (delete-task! current-task-id)
                                           (refresh-task-list!))]))
+
+      ;; 开始编辑模式
+      (define (start-edit)
+        (set! editing? #t)
+        (send edit-btn set-label "✓")
+        (send task-text-msg show #f)
+        (set! task-text-field 
+              (new text-field%
+                   [parent text-date-panel]
+                   [label ""]
+                   [init-value (task-text task-data)]
+                   [stretchable-width #t]
+                   [callback (lambda (tf evt)
+                               (when (eq? (send evt get-event-type) 'text-field-enter)
+                                 (finish-edit)))]))
+        (send task-text-field focus))
+
+      ;; 完成编辑
+      (define (finish-edit)
+        (when task-text-field
+          (define new-text (send task-text-field get-value))
+          (when (not (equal? (string-trim new-text) ""))
+            (edit-task! current-task-id new-text)
+            (send task-text-msg set-label new-text))
+          (send task-text-field show #f)
+          (send text-date-panel delete-child task-text-field)
+          (set! task-text-field #f)
+          (send task-text-msg show #t))
+        (set! editing? #f)
+        (send edit-btn set-label "✎"))
+
       (void))))
 
 ;; 保存和加载函数
@@ -146,7 +233,6 @@
 (define (task->hash t)
   (hash 'id (task-id t)
         'text (task-text t)
-        ;; 修复: 如果 due-date 是 #f, 保存为空字符串
         'due-date (if (task-due-date t) (task-due-date t) "")
         'completed (task-completed? t)
         'list-name (task-list-name t)
@@ -156,7 +242,6 @@
   (task (hash-ref h 'id 0)
         (hash-ref h 'text "")
         (let ([due (hash-ref h 'due-date "")])
-          ;; 修复: 如果 due-date 是空字符串,转换为 #f
           (if (equal? due "") #f due))
         (hash-ref h 'completed #f)
         (hash-ref h 'list-name "默认")
@@ -209,12 +294,13 @@
     (case (current-view)
       [("today")
        (let* ([today-struct (current-date)]
-              [today-str (string-append
-                          (~a (date-year today-struct))
-                          "-"
-                          (~a (date-month today-struct) #:min-width 2 #:pad-string "0")
-                          "-"
-                          (~a (date-day today-struct) #:min-width 2 #:pad-string "0"))])
+              [year (date-year today-struct)]
+              [month (date-month today-struct)]
+              [day (date-day today-struct)]
+              [today-str (format "~a-~a-~a"
+                                 (~a year)
+                                 (if (< month 10) (format "0~a" month) (~a month))
+                                 (if (< day 10) (format "0~a" day) (~a day)))])
          (filter (lambda (t)
                    (and (task-due-date t)
                         (string? (task-due-date t))
@@ -236,38 +322,46 @@
   (if (and date-str (string? date-str) (not (equal? date-str "")))
       (let ([parts (string-split date-str "-")])
         (if (= (length parts) 3)
-            (format "~a月~a日"
-                    (string->number (list-ref parts 1)) ; 获取月份
-                    (string->number (list-ref parts 2))) ; 获取日期
+            (let ([year (string->number (list-ref parts 0))]
+                  [month (string->number (list-ref parts 1))]
+                  [day (string->number (list-ref parts 2))])
+              (if (and year month day)
+                  (format "~a月~a日" month day)
+                  date-str))
             date-str))
       ""))
 
-;; 主窗口
+;; 修复问题3:主窗口布局优化,确保跨平台一致性
 (define frame (new frame%
                    [label "RReminder"]
-                   [width 800]
-                   [height 600]
+                   [width 850]  ; 稍微增加宽度以适应新的布局
+                   [height 650]
                    [style '(no-resize-border)]))
 
-(define main-panel (new horizontal-panel% [parent frame] [spacing 5] [border 5]))
+(define main-panel (new horizontal-panel% 
+                        [parent frame] 
+                        [spacing 8] 
+                        [border 8])) ; 统一间距和边框
 
 (define sidebar (new vertical-panel%
                      [parent main-panel]
-                     [min-width 140]
-                     [spacing 5]
-                     [border 5]
+                     [min-width 160]  ; 稍微增加侧边栏宽度
+                     [spacing 8]
+                     [border 8]
                      [stretchable-width #f]
                      [style '(border)]))
 
+;; 修复问题3:统一按钮大小和间距
 (define filter-panel (new horizontal-panel%
                           [parent sidebar]
-                          [stretchable-height #f]))
+                          [stretchable-height #f]
+                          [spacing 4]))
 
 (define today-btn (new button%
                        [parent filter-panel]
                        [label "今天"]
-                       [min-width 55]
-                       [min-height 45]
+                       [min-width 65]
+                       [min-height 32]
                        [callback (lambda (btn evt)
                                    (current-view "today")
                                    (send title-label set-label "今天")
@@ -276,8 +370,8 @@
 (define completed-btn (new button%
                            [parent filter-panel]
                            [label "完成"]
-                           [min-width 55]
-                           [min-height 45]
+                           [min-width 65]
+                           [min-height 32]
                            [callback (lambda (btn evt)
                                        (current-view "completed")
                                        (send title-label set-label "完成")
@@ -286,10 +380,10 @@
 (define my-lists-label (new message%
                              [parent sidebar]
                              [label "我的列表"]
-                             [vert-margin 10]
-                             [font (make-font #:weight 'bold #:family 'modern)]))
+                             [vert-margin 12]
+                             [font (make-font #:weight 'bold #:family 'modern #:size 11)]))
 
-(define lists-panel (new vertical-panel% [parent sidebar]))
+(define lists-panel (new vertical-panel% [parent sidebar] [spacing 2]))
 (define list-buttons '())
 
 (define (refresh-list-buttons!)
@@ -299,7 +393,8 @@
     (define btn (new button%
                      [parent lists-panel]
                      [label (todo-list-name lst)]
-                     [min-width 120]
+                     [min-width 140]
+                     [min-height 28]  ; 统一按钮高度
                      [callback (lambda (btn evt)
                                  (current-filter (todo-list-name lst))
                                  (current-view "list")
@@ -311,19 +406,22 @@
 
 (define list-management-panel (new horizontal-panel%
                                    [parent sidebar]
-                                   [stretchable-height #f]))
+                                   [stretchable-height #f]
+                                   [spacing 4]))
 
 (define add-list-btn (new button%
                           [parent list-management-panel]
-                          [label "+ 添加列表"]
-                          [min-width 70]
+                          [label "+ 列表"]
+                          [min-width 65]
+                          [min-height 32]
                           [callback (lambda (btn evt)
                                       (show-add-list-dialog))]))
 
 (define delete-list-btn (new button%
                              [parent list-management-panel]
-                             [label "- 删除列表"]
-                             [min-width 70]
+                             [label "- 删除"]
+                             [min-width 65]
+                             [min-height 32]
                              [callback (lambda (btn evt)
                                          (when (not (equal? (current-filter) ""))
                                            (define result
@@ -337,7 +435,11 @@
                                              (refresh-list-buttons!)
                                              (refresh-task-list!))))]))
 
-(define content-panel (new vertical-panel% [parent main-panel] [spacing 5] [border 5] [style '(border)]))
+(define content-panel (new vertical-panel% 
+                           [parent main-panel] 
+                           [spacing 8] 
+                           [border 8] 
+                           [style '(border)]))
 
 (define title-panel (new horizontal-panel%
                          [parent content-panel]
@@ -346,8 +448,8 @@
 (define title-label (new message%
                          [parent title-panel]
                          [label "工作"]
-                         [vert-margin 10]
-                         [font (make-font #:size 12 #:weight 'bold #:family 'modern)]))
+                         [vert-margin 12]
+                         [font (make-font #:size 13 #:weight 'bold #:family 'modern)]))
 
 (define task-scroll (new panel%
                         [parent content-panel]
@@ -357,7 +459,8 @@
                              [parent task-scroll]
                              [min-width 1]
                              [stretchable-height #t]
-                             [stretchable-width #t]))
+                             [stretchable-width #t]
+                             [spacing 2])) ; 任务项之间的间距
 
 (define bottom-panel (new horizontal-panel%
                           [parent content-panel]
@@ -366,6 +469,7 @@
 (define add-task-btn (new button%
                           [parent bottom-panel]
                           [label "+ 新提醒事项"]
+                          [min-height 32]
                           [callback (lambda (btn evt)
                                       (show-add-task-dialog))]))
 
@@ -380,17 +484,18 @@
   (define dialog (new dialog%
                       [label "添加新任务"]
                       [parent frame]
-                      [width 400]
-                      [height 200]))
-  (define dialog-panel (new vertical-panel% [parent dialog]))
+                      [width 450]
+                      [height 220]))
+  (define dialog-panel (new vertical-panel% [parent dialog] [spacing 8] [border 12]))
   (new message% [parent dialog-panel] [label "任务描述:"])
   (define text-field (new text-field% [parent dialog-panel] [label ""] [init-value ""]))
   (new message% [parent dialog-panel] [label "截止日期 (YYYY-MM-DD, 可选):"])
   (define date-field (new text-field% [parent dialog-panel] [label ""] [init-value ""]))
-  (define button-panel (new horizontal-panel% [parent dialog-panel]))
+  (define button-panel (new horizontal-panel% [parent dialog-panel] [spacing 8]))
   (define ok-btn (new button%
                       [parent button-panel]
                       [label "确定"]
+                      [min-width 60]
                       [callback (lambda (btn evt)
                                   (define text (send text-field get-value))
                                   (define date (send date-field get-value))
@@ -399,27 +504,33 @@
                                       (if (not (equal? (string-trim date) ""))
                                           (normalize-date-string (string-trim date))
                                           #f))
-                                    (define target-list
-                                      (cond
-                                        [(and (equal? (current-view) "list")
-                                              (not (equal? (current-filter) "")))
-                                         (current-filter)]
-                                        [(not (empty? (all-lists)))
-                                         (todo-list-name (first (all-lists)))]
-                                        [else "默认"]))
-                                    (when (equal? target-list "默认")
-                                      (add-todo-list! "默认" "blue"))
-                                    (add-task! text
-                                               normalized-date-str
-                                               target-list)
-                                    (current-view "list")
-                                    (current-filter target-list)
-                                    (send title-label set-label target-list)
-                                    (refresh-task-list!)
-                                    (send dialog show #f)))]))
+                                    (if normalized-date-str
+                                        (let ([target-list
+                                               (cond
+                                                 [(and (equal? (current-view) "list")
+                                                       (not (equal? (current-filter) "")))
+                                                  (current-filter)]
+                                                 [(not (empty? (all-lists)))
+                                                  (todo-list-name (first (all-lists)))]
+                                                 [else "默认"])])
+                                          (when (equal? target-list "默认")
+                                            (add-todo-list! "默认" "blue"))
+                                          (add-task! text
+                                                     normalized-date-str
+                                                     target-list)
+                                          (current-view "list")
+                                          (current-filter target-list)
+                                          (send title-label set-label target-list)
+                                          (refresh-task-list!)
+                                          (send dialog show #f))
+                                        (message-box "日期格式错误"
+                                                     "请输入正确的日期格式 (YYYY-MM-DD),例如: 2025-08-07"
+                                                     dialog
+                                                     '(ok)))))]))
   (define cancel-btn (new button%
                           [parent button-panel]
                           [label "取消"]
+                          [min-width 60]
                           [callback (lambda (btn evt)
                                       (send dialog show #f))]))
   (send text-field focus)
@@ -429,15 +540,16 @@
   (define dialog (new dialog%
                       [label "添加新列表"]
                       [parent frame]
-                      [width 300]
-                      [height 150]))
-  (define dialog-panel (new vertical-panel% [parent dialog]))
+                      [width 320]
+                      [height 160]))
+  (define dialog-panel (new vertical-panel% [parent dialog] [spacing 8] [border 12]))
   (new message% [parent dialog-panel] [label "列表名称:"])
   (define name-field (new text-field% [parent dialog-panel] [label ""] [init-value ""]))
-  (define button-panel (new horizontal-panel% [parent dialog-panel]))
+  (define button-panel (new horizontal-panel% [parent dialog-panel] [spacing 8]))
   (define ok-btn (new button%
                       [parent button-panel]
                       [label "确定"]
+                      [min-width 60]
                       [callback (lambda (btn evt)
                                   (define name (send name-field get-value))
                                   (when (not (equal? name ""))
@@ -447,6 +559,7 @@
   (define cancel-btn (new button%
                           [parent button-panel]
                           [label "取消"]
+                          [min-width 60]
                           [callback (lambda (btn evt)
                                       (send dialog show #f))]))
   (send name-field focus)
@@ -465,4 +578,5 @@
   (refresh-task-list!))
 
 (init-app!)
+(send frame center)
 (send frame show #t)
