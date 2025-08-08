@@ -472,7 +472,8 @@
 (define filter-panel (new vertical-panel%
                           [parent sidebar]
                           [stretchable-height #f]
-                          [spacing 4]))
+                          [spacing 4]
+                          [border 4]))
 
 (define filter-row1 (new horizontal-panel%
                          [parent filter-panel]
@@ -536,8 +537,8 @@
 (define my-lists-label (new message%
                             [parent label-panel]
                             [label "我的列表"]
-                            [vert-margin 2]
-                            [font (make-font #:weight 'bold #:family 'modern #:size 10)]))
+                            [vert-margin 8]
+                            [font (make-font #:weight 'bold #:family 'modern #:size 14)]))
 
 (define lists-panel (new vertical-panel% [parent sidebar] [spacing 2]))
 (define list-buttons '())
@@ -567,7 +568,7 @@
 
 (define add-list-btn (new button%
                           [parent list-management-panel]
-                          [label "+ 列表"]
+                          [label "+ 新建列表"]
                           [min-width 65]
                           [min-height 32]
                           [callback (lambda (btn evt)
@@ -575,7 +576,7 @@
 
 (define delete-list-btn (new button%
                              [parent list-management-panel]
-                             [label "删除"]
+                             [label "- 删除列表"]
                              [min-width 65]
                              [min-height 32]
                              [callback (lambda (btn evt)
