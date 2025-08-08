@@ -4,6 +4,8 @@
          racket/format
          json)
 
+(define macos-divider-color (make-object color% 209 209 214))
+
 ;; 数据结构定义
 (struct task (id text due-date completed? list-name created-at) #:transparent)
 (struct todo-list (name color) #:transparent)
@@ -14,7 +16,7 @@
 (define all-lists (make-parameter (list (todo-list "工作" "blue")
                                         (todo-list "生活" "green"))))
 (define current-filter (make-parameter "工作"))
-(define current-view (make-parameter "list")) ; "list", "today", "completed"
+(define current-view (make-parameter "list")) ; "list", "today", "planned", "all", "completed"
 
 ;; 日期格式化函数
 (define (normalize-date-string date-str)
@@ -75,19 +77,45 @@
     (all-tasks (filter (lambda (t) (not (equal? (task-id t) id-to-delete))) (all-tasks)))
     (save-tasks!)))
 
-
-(define (edit-task! id-to-edit new-text)
+(define (edit-task! id-to-edit new-text new-due-date)
   (with-handlers ([exn:fail? (lambda (e)
                                (printf "编辑任务错误: ~a\n" (exn-message e)))])
     (define updated-tasks
       (map (lambda (t)
              (if (equal? (task-id t) id-to-edit)
-                 (struct-copy task t [text new-text])
+                 (struct-copy task t [text new-text] [due-date new-due-date])
                  t))
            (all-tasks)))
     (all-tasks updated-tasks)
     (save-tasks!)))
 
+;; 创建列表分组标题组件
+(define list-group-header%
+  (class horizontal-panel%
+    (init-field list-name task-count)
+    
+    (super-new (stretchable-height #f)
+               (stretchable-width #t)
+               (spacing 8)
+               (border 8))
+    
+    (define title-msg (new message%
+                           [parent this]
+                           [label (format "~a (~a)" list-name task-count)]
+                           [font (make-font #:size 12 #:weight 'bold #:family 'modern)]))
+    
+    (define separator-canvas (new canvas%
+                                  [parent this]
+                                  [stretchable-width #t]
+                                  [min-height 1]
+                                  [stretchable-height #f]
+                                  [paint-callback
+                                   (lambda (canvas dc)
+                                     (define-values (w h) (send canvas get-size))
+                                     (send dc set-pen macos-divider-color 1 'solid)
+                                     (send dc draw-line 0 (/ h 2) w (/ h 2)))]))
+    
+    (void)))
 
 (define task-item%
   (class horizontal-panel%
@@ -96,14 +124,13 @@
     (super-new (stretchable-height #f)
                (stretchable-width #t)
                (style '(border))
-               (spacing 8) ; 统一间距
-               (border 5)) ; 统一边框
+               (spacing 8)
+               (border 5))
     
     (when task-data
       (define current-task-id (task-id task-data))
       (define editing? #f)
 
-     
       (define checkbox-panel (new panel%
                                   [parent this]
                                   [min-width 30]
@@ -117,14 +144,12 @@
                                         (toggle-task! current-task-id)
                                         (refresh-task-list!))]))
 
-      ;; 文本和日期面板
       (define text-date-panel (new vertical-panel%
                                    [parent this]
                                    [stretchable-width #t]
                                    [alignment '(left top)]
                                    [spacing 2]))
       
-      ;; 任务文本显示/编辑控件
       (define task-text-msg (new message%
                                  [parent text-date-panel]
                                  [stretchable-width #t]
@@ -133,71 +158,107 @@
                                            (make-font #:style 'italic #:family 'modern)
                                            (make-font #:family 'modern))]))
       
-      (define task-text-field #f) ; 编辑时使用的文本框
+      (define task-text-field #f)
+      (define task-date-field #f)
 
-      ;; 显示截止日期
       (define due-label
         (when (task-due-date task-data)
           (new message%
                [parent text-date-panel]
                [label (format-date (task-due-date task-data))]
-               [font (make-font #:size 9 #:family 'modern #:style 'italic)])))
+               [font (make-font #:size 9 #:family 'modern)])))
 
       (define button-panel (new horizontal-panel%
                                 [parent this]
                                 [stretchable-width #f]
                                 [spacing 4]))
       
-      ;; 编辑按钮
       (define edit-btn (new button%
                             [parent button-panel]
                             [label "✎"]
-                            [min-width 32]
+                            [min-width 20]
                             [min-height 24]
                             [callback (lambda (btn evt)
                                         (if editing?
                                             (finish-edit)
                                             (start-edit)))]))
       
-      ;; 删除按钮
       (define delete-btn (new button%
                               [parent button-panel]
                               [label "×"]
-                              [min-width 32]
+                              [min-width 20]
                               [min-height 24]
                               [callback (lambda (btn evt)
                                           (delete-task! current-task-id)
                                           (refresh-task-list!))]))
 
-      ;; 开始编辑模式
       (define (start-edit)
         (set! editing? #t)
         (send edit-btn set-label "✓")
         (send task-text-msg show #f)
+        (when due-label (send due-label show #f))
+        
         (set! task-text-field 
               (new text-field%
                    [parent text-date-panel]
-                   [label ""]
+                   [label "任务:"]
                    [init-value (task-text task-data)]
+                   [stretchable-width #t]))
+        
+        (set! task-date-field
+              (new text-field%
+                   [parent text-date-panel]
+                   [label "日期:"]
+                   [init-value (if (task-due-date task-data) 
+                                   (task-due-date task-data) 
+                                   "")]
                    [stretchable-width #t]
                    [callback (lambda (tf evt)
                                (when (eq? (send evt get-event-type) 'text-field-enter)
                                  (finish-edit)))]))
         (send task-text-field focus))
 
-      ;; 完成编辑
       (define (finish-edit)
-        (when task-text-field
+        (when (and task-text-field task-date-field)
           (define new-text (send task-text-field get-value))
+          (define new-date (send task-date-field get-value))
+          
           (when (not (equal? (string-trim new-text) ""))
-            (edit-task! current-task-id new-text)
-            (send task-text-msg set-label new-text))
-          (send task-text-field show #f)
-          (send text-date-panel delete-child task-text-field)
-          (set! task-text-field #f)
-          (send task-text-msg show #t))
-        (set! editing? #f)
-        (send edit-btn set-label "✎"))
+            (define normalized-date
+              (if (not (equal? (string-trim new-date) ""))
+                  (normalize-date-string (string-trim new-date))
+                  #f))
+            
+            (if (or (equal? (string-trim new-date) "") normalized-date)
+                (begin
+                  (edit-task! current-task-id new-text normalized-date)
+                  (send task-text-msg set-label new-text)
+                  
+                  (when due-label
+                    (send text-date-panel delete-child due-label)
+                    (set! due-label #f))
+                  
+                  (when normalized-date
+                    (set! due-label
+                          (new message%
+                               [parent text-date-panel]
+                               [label (format-date normalized-date)]
+                               [font (make-font #:size 9 #:family 'modern #:style 'italic)])))
+                  
+                  (send task-text-field show #f)
+                  (send task-date-field show #f)
+                  (send text-date-panel delete-child task-text-field)
+                  (send text-date-panel delete-child task-date-field)
+                  (set! task-text-field #f)
+                  (set! task-date-field #f)
+                  (send task-text-msg show #t)
+                  (when due-label (send due-label show #t))
+                  (set! editing? #f)
+                  (send edit-btn set-label "✎"))
+                
+                (message-box "日期格式错误" 
+                             "请输入正确的日期格式 (YYYY-MM-DD),例如: 2025-08-07,或留空表示无截止日期" 
+                             frame '(ok))))))
 
       (void))))
 
@@ -284,7 +345,40 @@
           (send title-label set-label "无列表"))))
   (save-tasks!))
 
-;; 列表过滤逻辑
+;; 改进的任务排序函数
+(define (sort-tasks-by-date tasks)
+  (sort tasks
+        (lambda (t1 t2)
+          (define date1 (task-due-date t1))
+          (define date2 (task-due-date t2))
+          (cond
+            [(and date1 date2) (string<? date1 date2)]
+            [date1 #t]  ; 有日期的排在前面
+            [date2 #f]  ; 有日期的排在前面
+            [else (< (task-created-at t1) (task-created-at t2))]))))  ; 都没日期按创建时间
+
+;; 按列表分组任务
+(define (group-tasks-by-list tasks)
+  (define groups (make-hash))
+  
+  ;; 将任务按列表分组
+  (for ([task tasks])
+    (define list-name (task-list-name task))
+    (hash-set! groups list-name 
+               (cons task (hash-ref groups list-name '()))))
+  
+  ;; 对每个分组内的任务按日期排序,并返回有序的分组列表
+  (define sorted-groups '())
+  (for ([list-obj (all-lists)])
+    (define list-name (todo-list-name list-obj))
+    (when (hash-has-key? groups list-name)
+      (define group-tasks (hash-ref groups list-name))
+      (define sorted-tasks (sort-tasks-by-date group-tasks))
+      (set! sorted-groups (cons (cons list-name sorted-tasks) sorted-groups))))
+  
+  (reverse sorted-groups))
+
+;; 改进的列表过滤逻辑
 (define (filter-tasks)
   (with-handlers ([exn:fail? (lambda (e)
                                (printf "过滤任务错误: ~a\n" (exn-message e))
@@ -305,6 +399,15 @@
                         (equal? (task-due-date t) today-str)
                         (not (task-completed? t))))
                  (all-tasks)))]
+      [("planned")
+       (filter (lambda (t)
+                 (and (task-due-date t)
+                      (string? (task-due-date t))
+                      (not (equal? (task-due-date t) ""))
+                      (not (task-completed? t))))
+               (all-tasks))]
+      [("all")
+       (filter (lambda (t) (not (task-completed? t))) (all-tasks))]
       [("completed") (filter task-completed? (all-tasks))]
       [else
        (let ([filter-val (current-filter)])
@@ -328,7 +431,6 @@
                   date-str))
             date-str))
       ""))
-
 
 (define frame (new frame%
                    [label "rreminder"]
@@ -358,43 +460,78 @@
                      [paint-callback
                       (lambda (canvas dc)
                         (define-values (w h) (send canvas get-size))
-                        (send dc set-pen "gray" 1 'solid)
+                        (send dc set-pen macos-divider-color 1 'solid)
                         (send dc draw-line 0 0 0 h))]))
 
+(define content-panel (new vertical-panel% 
+                           [parent main-panel] 
+                           [spacing 4] 
+                           [border 4]
+                           ))
 
-(define filter-panel (new horizontal-panel%
+(define filter-panel (new vertical-panel%
                           [parent sidebar]
                           [stretchable-height #f]
                           [spacing 4]))
 
-(define label-panel (new horizontal-panel%
-                         [parent sidebar]
+(define filter-row1 (new horizontal-panel%
+                         [parent filter-panel]
                          [stretchable-height #f]
                          [spacing 4]))
 
 (define today-btn (new button%
-                       [parent filter-panel]
+                       [parent filter-row1]
                        [label "今天"]
                        [min-width 50]
                        [min-height 30]
                        [stretchable-width #t]
-                       [stretchable-height #t]
                        [callback (lambda (btn evt)
                                    (current-view "today")
                                    (send title-label set-label "今天")
                                    (refresh-task-list!))]))
 
+(define planned-btn (new button%
+                         [parent filter-row1]
+                         [label "计划"]
+                         [min-width 50]
+                         [min-height 30]
+                         [stretchable-width #t]
+                         [callback (lambda (btn evt)
+                                     (current-view "planned")
+                                     (send title-label set-label "计划")
+                                     (refresh-task-list!))]))
+
+(define filter-row2 (new horizontal-panel%
+                         [parent filter-panel]
+                         [stretchable-height #f]
+                         [spacing 4]))
+
+(define all-btn (new button%
+                     [parent filter-row2]
+                     [label "所有"]
+                     [min-width 50]
+                     [min-height 30]
+                     [stretchable-width #t]
+                     [callback (lambda (btn evt)
+                                 (current-view "all")
+                                 (send title-label set-label "所有任务")
+                                 (refresh-task-list!))]))
+
 (define completed-btn (new button%
-                           [parent filter-panel]
+                           [parent filter-row2]
                            [label "完成"]
                            [min-width 50]
-                           [min-height 50]
+                           [min-height 30]
                            [stretchable-width #t]
-                           [stretchable-height #t]
                            [callback (lambda (btn evt)
                                        (current-view "completed")
                                        (send title-label set-label "完成")
                                        (refresh-task-list!))]))
+
+(define label-panel (new horizontal-panel%
+                         [parent sidebar]
+                         [stretchable-height #f]
+                         [spacing 4]))
 
 (define my-lists-label (new message%
                             [parent label-panel]
@@ -413,7 +550,7 @@
                      [parent lists-panel]
                      [label (todo-list-name lst)]
                      [min-width 140]
-                     [min-height 28]  ; 统一按钮高度
+                     [min-height 28]
                      [callback (lambda (btn evt)
                                  (current-filter (todo-list-name lst))
                                  (current-view "list")
@@ -454,12 +591,6 @@
                                              (refresh-list-buttons!)
                                              (refresh-task-list!))))]))
 
-(define content-panel (new vertical-panel% 
-                           [parent main-panel] 
-                           [spacing 4] 
-                           [border 4]
-                           ))
-
 (define title-panel (new horizontal-panel%
                          [parent content-panel]
                          [stretchable-height #f]))
@@ -479,7 +610,7 @@
                              [min-width 1]
                              [stretchable-height #t]
                              [stretchable-width #t]
-                             [spacing 2])) ; 任务项之间的间距
+                             [spacing 2]))
 
 (define bottom-panel (new horizontal-panel%
                           [parent content-panel]
@@ -492,12 +623,37 @@
                           [callback (lambda (btn evt)
                                       (show-add-task-dialog))]))
 
+;; 改进的任务列表刷新函数
 (define (refresh-task-list!)
   (send task-list-panel change-children (lambda (children) '()))
   (define filtered-tasks (filter-tasks))
-  (for ([task-data filtered-tasks])
-    (when task-data
-      (new task-item% [parent task-list-panel] [task-data task-data]))))
+  
+  ;; 判断是否需要分组显示
+  (cond
+    [(or (equal? (current-view) "planned") 
+         (equal? (current-view) "all")
+         (equal? (current-view) "completed"))
+     ;; 分组显示
+     (define grouped-tasks (group-tasks-by-list filtered-tasks))
+     (for ([group grouped-tasks])
+       (define list-name (car group))
+       (define group-tasks (cdr group))
+       (when (not (empty? group-tasks))
+         ;; 添加分组标题
+         (new list-group-header% 
+              [parent task-list-panel] 
+              [list-name list-name] 
+              [task-count (length group-tasks)])
+         ;; 添加该分组的任务
+         (for ([task-data group-tasks])
+           (when task-data
+             (new task-item% [parent task-list-panel] [task-data task-data])))))]
+    [else
+     ;; 普通显示(今天、单个列表等)
+     (define sorted-tasks (sort-tasks-by-date filtered-tasks))
+     (for ([task-data sorted-tasks])
+       (when task-data
+         (new task-item% [parent task-list-panel] [task-data task-data])))]))
 
 (define (show-add-task-dialog)
   (define dialog (new dialog%
@@ -523,7 +679,9 @@
                                       (if (not (equal? (string-trim date) ""))
                                           (normalize-date-string (string-trim date))
                                           #f))
-                                    (if normalized-date-str
+                                    (if (or (not (string-trim date))
+                                            (equal? (string-trim date) "")
+                                            normalized-date-str)
                                         (let ([target-list
                                                (cond
                                                  [(and (equal? (current-view) "list")
