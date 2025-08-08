@@ -155,18 +155,19 @@
                                  [stretchable-width #t]
                                  [label (task-text task-data)]
                                  [font (if (task-completed? task-data)
-                                           (make-font #:style 'italic #:family 'modern)
+                                           (make-font #:family 'modern)
                                            (make-font #:family 'modern))]))
       
       (define task-text-field #f)
       (define task-date-field #f)
-
+      
       (define due-label
-        (when (task-due-date task-data)
-          (new message%
-               [parent text-date-panel]
-               [label (format-date (task-due-date task-data))]
-               [font (make-font #:size 9 #:family 'modern)])))
+        (if (task-due-date task-data)
+            (new message%
+                 [parent text-date-panel]
+                 [label (format-date (task-due-date task-data))]
+                 [font (make-font #:size 9 #:family 'modern)])
+            #f))
 
       (define button-panel (new horizontal-panel%
                                 [parent this]
@@ -243,7 +244,7 @@
                           (new message%
                                [parent text-date-panel]
                                [label (format-date normalized-date)]
-                               [font (make-font #:size 9 #:family 'modern #:style 'italic)])))
+                               [font (make-font #:size 9 #:family 'modern)])))
                   
                   (send task-text-field show #f)
                   (send task-date-field show #f)
@@ -433,10 +434,9 @@
       ""))
 
 (define frame (new frame%
-                   [label "rreminder"]
-                   [width 850]
-                   [height 650]
-                   [style '(no-resize-border)]
+                   [label "RReminder"]
+                   [min-width 850]
+                   [min-height 650]
                    ))
 
 (define main-panel (new horizontal-panel% 
@@ -514,7 +514,7 @@
                      [stretchable-width #t]
                      [callback (lambda (btn evt)
                                  (current-view "all")
-                                 (send title-label set-label "所有任务")
+                                 (send title-label set-label "所有")
                                  (refresh-task-list!))]))
 
 (define completed-btn (new button%
@@ -575,7 +575,7 @@
 
 (define delete-list-btn (new button%
                              [parent list-management-panel]
-                             [label "- 删除"]
+                             [label "删除"]
                              [min-width 65]
                              [min-height 32]
                              [callback (lambda (btn evt)
@@ -599,7 +599,7 @@
                          [parent title-panel]
                          [label "工作"]
                          [vert-margin 12]
-                         [font (make-font #:size 13 #:weight 'bold #:family 'modern)]))
+                         [font (make-font #:size 18 #:weight 'bold #:family 'modern)]))
 
 (define task-scroll (new panel%
                          [parent content-panel]
@@ -659,12 +659,14 @@
   (define dialog (new dialog%
                       [label "添加新任务"]
                       [parent frame]
-                      [width 450]
-                      [height 220]))
+                      [width 400]
+                      [height 500]
+                      [stretchable-width #t]
+                      [stretchable-height #f]))
   (define dialog-panel (new vertical-panel% [parent dialog] [spacing 8] [border 12]))
-  (new message% [parent dialog-panel] [label "任务描述:"])
+  (new message% [parent dialog-panel] [label "任务描述:"] [stretchable-width #t])
   (define text-field (new text-field% [parent dialog-panel] [label ""] [init-value ""]))
-  (new message% [parent dialog-panel] [label "截止日期 (YYYY-MM-DD, 可选):"])
+  (new message% [parent dialog-panel] [label "截止日期 (YYYY-MM-DD, 可选):"] [stretchable-width #t])
   (define date-field (new text-field% [parent dialog-panel] [label ""] [init-value ""]))
   (define button-panel (new horizontal-panel% [parent dialog-panel] [spacing 8]))
   (define ok-btn (new button%
